@@ -1,0 +1,40 @@
+# my_agent 配置文件
+# 所有字符串字段支持 ${ENV_VAR} / $ENV_VAR 环境变量展开
+
+server:
+  addr: ":8080"
+  mode: release            # debug | release | test（gin 模式）
+  read_header_timeout: 10s
+  max_body_size: 33554432  # 32 MiB，base64 视频/音频需要余量
+
+# 命名模型实例：agent 通过 key 引用。
+# type: openai 即 OpenAI 兼容接口 —— 换 base_url 即可接入
+#   OpenAI    https://api.openai.com/v1
+#   DeepSeek  https://api.deepseek.com/v1
+#   Qwen      https://dashscope.aliyuncs.com/compatible-mode/v1
+#   vLLM      http://localhost:8000/v1
+models:
+  main:
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    model: ${OPENAI_MODEL:-gpt-4o-mini}
+    timeout: 120s
+
+# agent 定义：yaml key 即 agent 名。
+# V2 在此追加 tools 字段；V3 在此追加更多 agent 与编排关系。
+agents:
+  default: main_agent
+  definitions:
+    main_agent:
+      model: main
+      description: General-purpose multimodal assistant
+      instruction: |
+        You are a helpful assistant. Answer concisely.
+        When the user sends images, audio, video or files,
+        describe and reason about their content.
+      max_iterations: 20
+
+sessions:
+  store: memory            # V4: redis
+  max_messages: 100        # 每会话历史上限（0 = 不限）
