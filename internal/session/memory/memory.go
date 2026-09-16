@@ -4,11 +4,13 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/lufengbai68-gif/my_agent/internal/history"
 	"github.com/lufengbai68-gif/my_agent/internal/session"
 )
 
@@ -23,6 +25,17 @@ var _ session.Store = (*Store)(nil)
 // New 创建空的内存存储。
 func New() *Store {
 	return &Store{sessions: make(map[string]*session.Session)}
+}
+
+// Get 返回会话副本；不存在返回 session.ErrNotFound。
+func (s *Store) Get(_ context.Context, id string) (*session.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return nil, session.ErrNotFound
+	}
+	return cloneSession(sess), nil
 }
 
 // GetOrCreate 返回会话副本；不存在则以当前时间创建。
@@ -63,11 +76,33 @@ func (s *Store) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// List 返回所有 session(按 UpdatedAt 倒序),深拷贝避免 caller 修改内部状态。
+func (s *Store) List(_ context.Context) ([]*session.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*session.Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		cp := *sess
+		cp.Messages = append([]*schema.Message{}, sess.Messages...)
+		cp.History = make([]history.Message, 0, len(sess.History))
+		for _, message := range sess.History {
+			cp.History = append(cp.History, message.Clone())
+		}
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out, nil
+}
+
 // cloneSession 复制会话及其 Messages 切片。
 // 消息对象本身在写入后视为不可变（chat.Service 的纪律），
 // 因此浅拷贝消息指针即可安全隔离追加操作。
 func cloneSession(sess *session.Session) *session.Session {
 	cp := *sess
 	cp.Messages = append([]*schema.Message(nil), sess.Messages...)
+	cp.History = make([]history.Message, 0, len(sess.History))
+	for _, message := range sess.History {
+		cp.History = append(cp.History, message.Clone())
+	}
 	return &cp
 }

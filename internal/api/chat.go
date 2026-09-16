@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/lufengbai68-gif/my_agent/internal/chat"
+	"github.com/lufengbai68-gif/my_agent/internal/llm"
 )
 
 // handleChat POST /v1/chat/completions
@@ -34,7 +35,11 @@ func (h *Handler) handleChat(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.Complete(c.Request.Context(), req.SessionID, req.Agent, req.ToUserMessage())
+	opts := llm.GenerateOptions{
+		ModelKey:        req.Model,
+		GenerationParams: req.GenerationParams,
+	}
+	result, err := h.svc.Complete(c.Request.Context(), req.SessionID, opts, req.ToUserMessage())
 	if err != nil {
 		failErr(c, err)
 		return
@@ -45,6 +50,7 @@ func (h *Handler) handleChat(c *gin.Context) {
 		Agent:     result.AgentName,
 		Role:      string(result.Message.Role),
 		Content:   result.Message.Content,
+		Media:     result.Media,
 		CreatedAt: result.CreatedAt,
 	}
 	if result.Message.ResponseMeta != nil {
@@ -89,6 +95,10 @@ func (h *Handler) streamChat(c *gin.Context, req *ChatRequest) {
 		return nil
 	}
 
-	_ = h.svc.Stream(c.Request.Context(), req.SessionID, req.Agent, req.ToUserMessage(), sink)
+	opts := llm.GenerateOptions{
+		ModelKey:        req.Model,
+		GenerationParams: req.GenerationParams,
+	}
+	_ = h.svc.Stream(c.Request.Context(), req.SessionID, opts, req.ToUserMessage(), sink)
 	// 客户端断开（sink 出错）或上游失败都已通过 error 事件告知，此处直接结束响应
 }

@@ -2,39 +2,128 @@
 # 所有字符串字段支持 ${ENV_VAR} / $ENV_VAR 环境变量展开
 
 server:
-  addr: ":8080"
-  mode: release            # debug | release | test（gin 模式）
+  addr: ":8083"
+  mode: release
   read_header_timeout: 10s
-  max_body_size: 33554432  # 32 MiB，base64 视频/音频需要余量
+  max_body_size: 33554432  # 32 MiB
 
-# 命名模型实例：agent 通过 key 引用。
-# type: openai 即 OpenAI 兼容接口 —— 换 base_url 即可接入
-#   OpenAI    https://api.openai.com/v1
-#   DeepSeek  https://api.deepseek.com/v1
-#   Qwen      https://dashscope.aliyuncs.com/compatible-mode/v1
-#   vLLM      http://localhost:8000/v1
+# 模型配置：type + provider 双字段路由
+#   type 表能力类别：chat | image | video | audio
+#   provider 表协议实现：openai | ark | ...
+#
+# 当前支持的 (type, provider) 组合：
+#   chat  + openai        → OpenAI 兼容 chat（OpenAI/DeepSeek/Qwen/方舟/vLLM）
+#   image + openai        → OpenAI Images API
+#   image + ark           → 火山方舟原生图片 API（doubao-seedream 系列）
+#   video + ark           → 火山方舟 Seedance 视频生成
+#
+# 多模态生成参数（用户通过对话传入，工具层映射到 GenerateRequest）：
+#   - 图片：size / aspect_ratio / width / height / n / seed / negative_prompt
+#           aspect_ratio → size 派生：1:1/16:9/9:16/4:3/3:4/3:2/2:3/21:9
+#   - 视频：ratio / duration / resolution / fps / seed / camerafixed / watermark
 models:
-  main:
-    type: openai
+  # ── 隐藏的对话模型（主 agent 用，前端看不到）──
+  main_chat:
+    type: chat
+    provider: openai
+    chat_only: true           # ← 前端不可见
     api_key: ${OPENAI_API_KEY}
     base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     model: ${OPENAI_MODEL:-gpt-4o-mini}
     timeout: 120s
 
-# agent 定义：yaml key 即 agent 名。
-# V2 在此追加 tools 字段；V3 在此追加更多 agent 与编排关系。
+  # ── 图片生成模型（前端可见）──
+  gpt_image_1:
+    type: image
+    provider: openai
+    chat_only: false
+    label: "GPT Image-1（高质量图片）"
+    capabilities:
+      text: false
+      image: true
+      audio: false
+      video: false
+      file: false
+    api_key: ${OPENAI_API_KEY}
+    base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    model: gpt-image-1
+    timeout: 120s
+
+  # ── 视频生成模型（前端可见）──
+  seedance_pro:
+    type: video
+    provider: ark
+    chat_only: false
+    label: "Seedance Pro（火山方舟视频）"
+    capabilities:
+      text: false
+      image: false
+      audio: false
+      video: true
+      file: false
+    api_key: ${ARK_API_KEY:-}
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    model: Doubao-Seedance-2.5
+    poll_interval: 5s
+    max_wait: 600s
+
+# 主 agent（dispatcher）：用户看不到，所有对话都过它。
+# 它有 generate_image / generate_video 两个工具，根据用户意图决定是否调生成。
 agents:
-  default: main_agent
+  default: dispatcher
   definitions:
-    main_agent:
-      model: main
-      description: General-purpose multimodal assistant
+    dispatcher:
+      model: main_chat
+      description: Intelligent dispatcher that routes user intent to image/video generation or direct chat
       instruction: |
-        You are a helpful assistant. Answer concisely.
-        When the user sends images, audio, video or files,
-        describe and reason about their content.
+        You are a helpful assistant with optional image/video generation capability.
+
+        DECISION ORDER (follow strictly):
+        1. Read the user's actual message and conversation history.
+        2. Does the user EXPLICITLY ask for image or video generation?
+           YES → call the matching tool (generate_image / generate_video)
+           NO  → respond conversationally. NEVER call any tool.
+        3. "Explicit" means the user describes what to generate OR uses generation
+           verbs (画/生成/make/draw/generate/创作...). A bare greeting
+           (你好/hi/hello) or a question is NEVER generation.
+
+        UI STATE:
+        The user message may be prefixed with this hint (only):
+          [user selected model_key=<key>]
+
+        This reflects what the user has selected in the chat UI (model dropdown).
+        It is NOT a command. The user-selected model key tells you which generation
+        model to use IF you decide to generate. For greetings, questions, and any
+        non-generation request, IGNORE the hint.
+
+        (generation_params such as aspect_ratio, duration, resolution are passed
+        out-of-band and arrive at the tool automatically. You do NOT need to read
+        or pass them.)
+
+        WHEN CALLING A TOOL:
+          - model_key: use the value from the hint exactly.
+          - prompt: refine into a detailed English prompt (translate if needed).
+            For short requests, expand with composition, lighting, style details.
+
+        WHEN RESPONDING CONVERSATIONALLY:
+          - Just answer the user's question.
+          - Do NOT call any tool.
       max_iterations: 20
 
 sessions:
-  store: memory            # V4: redis
-  max_messages: 100        # 每会话历史上限（0 = 不限）
+  store: memory
+  max_messages: 100
+
+# 日志配置(全局 slog)
+#   level:  debug | info | warn | error
+#   format: json (生产,默认) | text (开发,可读性更好)
+#   redact: 命中字段名(大小写不敏感)的 attr 值会被打码成 ***REDACTED***
+logging:
+  level: info
+  format: json
+  redact:
+    - api_key
+    - authorization
+    - x-api-key
+    - access_key
+    - secret_key

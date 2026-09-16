@@ -24,6 +24,7 @@ type errorDetail struct {
 
 // fail 按状态码 + 错误码输出错误响应。
 func fail(c *gin.Context, status int, code, msg string) {
+	c.Set("error_code", code)
 	c.JSON(status, errorBody{Error: errorDetail{Code: code, Message: msg}})
 }
 

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/lufengbai68-gif/my_agent/internal/history"
 )
 
 // ErrNotFound 会话不存在。
@@ -18,6 +20,7 @@ var ErrNotFound = errors.New("session not found")
 type Session struct {
 	ID        string            `json:"id"`
 	Messages  []*schema.Message `json:"-"` // 由 API 层转换为视图，不直接序列化
+	History   []history.Message `json:"-"` // 独立渲染快照，不依赖 Eino Extra
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
@@ -28,8 +31,14 @@ type Store interface {
 	// GetOrCreate 返回指定 id 的会话，不存在则创建。
 	// id 必须非空。
 	GetOrCreate(ctx context.Context, id string) (*Session, error)
+	// Get 返回指定 id 的会话，不存在返回 ErrNotFound（不创建）。
+	// 用于 GET 类查询接口,避免读路径产生副作用。
+	Get(ctx context.Context, id string) (*Session, error)
 	// Save 保存会话整体（全量覆盖 Messages）。
 	Save(ctx context.Context, s *Session) error
 	// Delete 删除会话；不存在时返回 ErrNotFound。
 	Delete(ctx context.Context, id string) error
+	// List 返回所有会话(按 UpdatedAt 倒序,最新活跃的在前)。
+	// 用于侧边栏 / 多 session 切换,实现必须返回深拷贝,不可让 caller 改内部状态。
+	List(ctx context.Context) ([]*Session, error)
 }

@@ -145,7 +145,47 @@ sessions: { store: memory, max_messages: 100 }
 - **V4 持久会话**：`internal/session/redis` 实现 `session.Store`
 - **后续**：RAG（即一种工具）、认证/限流（gin 中间件）、观测（eino callbacks 注入 `build.go`）
 
+## 运维限制（V1 已知约束）
+
+### 单进程部署
+
+会话和上传元数据都存在**进程内存**里：
+
+- `internal/session/memory`：所有 session + 消息
+- `internal/uploads/memory`：所有 upload 元数据 + session 倒排索引
+- **进程重启即全部丢失**，OSS 对象本身残留（依赖 TOS lifecycle 兜底清理）
+
+**多实例部署会导致**：
+- 不同实例看到不同的 session 列表（A 实例建的 session，B 实例查不到）
+- `X-Session-Id` 校验在不同实例上表现不一致
+- SSE 长连接被负载均衡切断（需要在 LB 层做 IP 亲和）
+
+V4 接 Redis session store 时这些问题自动消失。
+
+### CORS 默认未配置
+
+服务启动后**默认不允许跨域请求**（gin 默认不带 CORS middleware）。
+
+前端如果跟后端不同源，必须自行加一层 nginx 反代，或在 `cmd/my_agent/main.go` 的 `NewRouter` 里加 CORS middleware（仅建议私部署/开发环境用，**生产环境走反代**）。
+
+### 密钥管理
+
+- `configs/local.yaml` 已在 `.gitignore`，放真实 key
+- 进程不监听 secret manager，**改 yaml 必须重启**
+- 多个 chat / image / video model 共享同一对方舟 AK/SK（细粒度鉴权隔离要靠 IAM 控制台配子账号）
+
+### 配置加载顺序（无 `-config` 参数时）
+
+1. `configs/local.yaml`（本地覆盖，gitignored）
+2. `configs/config.yaml`（默认模板，提交进 git）
+
+### Upload 流式配额
+
+- 单文件 ≤ `uploads.max_size`（默认 10 MiB）
+- **没有 in-flight 并发限流**：恶意并发多文件上传可打爆进程内存（同时占用 32 MiB 上限 + 文件内容）。建议前面加 nginx 限流。
+
 ## 开发
+
 
 ```bash
 make build      # go build ./...

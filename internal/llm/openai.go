@@ -11,7 +11,13 @@ import (
 // RegisterBuiltins 注册内置供应商工厂。
 // 新供应商在此追加一行（工厂函数放同包新文件）。
 func RegisterBuiltins(r *Registry) {
-	r.RegisterFactory("openai", newOpenAI)
+	// Chat models（对话用 LLM）
+	r.RegisterChatFactory("chat", "openai", newOpenAI)
+
+	// Generation models（图片/视频生成）
+	r.RegisterGenerationFactory("image", "openai", newOpenAIImage)
+	r.RegisterGenerationFactory("image", "ark", newArkImage) // 火山方舟原生图片 API
+	r.RegisterGenerationFactory("video", "ark", newSeedanceVideo)
 }
 
 // newOpenAI 构建 OpenAI 兼容模型。
